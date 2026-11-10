@@ -25,5 +25,5 @@ go build -o mdedit .
 ✻ Brewed for 10m 39s · done 17:32
 Model: Fable 5.1
 
-2839-2360=479 ₽
+2839-2360=479 ₽ ≈ 5.79 $ (2026-11-10)
 
