@@ -94,6 +94,7 @@ func main() {
 	}
 
 	a := app.NewWithID("io.github.mdedit")
+	a.Settings().SetTheme(newAppTheme(loadSettings(a.Preferences())))
 	ed := newEditor(a, opts.previewOnly)
 	if opts.path != "" {
 		ed.openPath(opts.path)

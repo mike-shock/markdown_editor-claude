@@ -23,11 +23,14 @@ Options may be placed before or after the file name.
 
 | Button / action  | What it does |
 |------------------|--------------|
+| **New**          | Replaces the document with an empty untitled one (asks about unsaved changes first). |
 | **Open**         | File chooser that starts in the *current working directory*, not `$HOME`. |
 | **Save**         | Writes the current file; asks for a name if the document is untitled. |
 | **Save As…**     | Save under a new name (dialog starts in the file's directory or the CWD). |
 | **Export HTML**  | Writes `<name>.html` next to the `.md` file (GitHub-flavoured Markdown via goldmark). |
 | **Web View**     | Renders the document to a temporary `.html` file and opens it in the default browser. Temporary files are deleted when the editor exits. |
+| **Settings**     | Opens the settings window: theme (System / Light / Dark) and default font size (10–18 pt, 14 pt by default). Changes apply immediately and are remembered between runs. |
+| **Quit**         | Exits the application, first offering to save unsaved changes. |
 
 * Live preview updates while typing (debounced).
 * Editor (left) and preview (right) scroll together in both directions; the
@@ -35,7 +38,8 @@ Options may be placed before or after the file name.
   corresponding content stays at roughly the same height.
 * Exported / web-view HTML styles all document text, including code, with a
   sans-serif font stack and supports light and dark colour schemes.
-* Unsaved changes are confirmed before opening another file or closing.
+* Before New, Open, Quit or closing the window with unsaved changes, the
+  editor asks whether to **Save**, **Discard** or **Cancel**.
 
 ## Localisation
 
@@ -59,6 +63,7 @@ completeness of the translation files and runtime localisation.
 
 * `main.go` — argument parsing, translation loading, application start-up
 * `editor.go` — window, widgets, file operations, synchronised scrolling
+* `settings.go` — settings window, persisted preferences, custom theme
 * `html.go` — Markdown → HTML conversion, export and temporary files
 * `translations/` — UI strings for en / ru / ja
 * `sample.md` — a document to try the editor with

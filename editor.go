@@ -40,6 +40,8 @@ type editor struct {
 	syncing     bool        // guards against scroll feedback loops
 	renderTimer *time.Timer // pending preview update
 
+	settingsWin fyne.Window // open settings window, if any
+
 	tempMu    sync.Mutex
 	tempFiles []string // "Web View" files to delete on exit
 }
@@ -49,6 +51,7 @@ func newEditor(a fyne.App, previewOnly bool) *editor {
 	e.win = a.NewWindow(lang.L("Markdown Editor"))
 	e.win.Resize(fyne.NewSize(1100, 720))
 	e.win.SetCloseIntercept(e.requestClose)
+	e.win.SetMaster() // closing the main window also closes Settings
 
 	e.buildWidgets()
 	e.win.SetContent(e.buildLayout())
@@ -91,16 +94,21 @@ func (e *editor) buildLayout() fyne.CanvasObject {
 	openBtn := widget.NewButtonWithIcon(lang.L("Open"), theme.FolderOpenIcon(), e.openDialog)
 	exportBtn := widget.NewButtonWithIcon(lang.L("Export HTML"), theme.DocumentIcon(), e.exportHTML)
 	webBtn := widget.NewButtonWithIcon(lang.L("Web View"), theme.ComputerIcon(), e.webView)
+	settingsBtn := widget.NewButtonWithIcon(lang.L("Settings"), theme.SettingsIcon(), e.showSettings)
+	quitBtn := widget.NewButtonWithIcon(lang.L("Quit"), theme.LogoutIcon(), e.quit)
 
 	var toolbar *fyne.Container
 	var body fyne.CanvasObject
 	if e.previewOnly {
-		toolbar = container.NewHBox(openBtn, exportBtn, webBtn)
+		toolbar = container.NewHBox(openBtn, exportBtn, webBtn,
+			widget.NewSeparator(), settingsBtn, quitBtn)
 		body = e.previewScroll
 	} else {
+		newBtn := widget.NewButtonWithIcon(lang.L("New"), theme.DocumentCreateIcon(), e.newDocument)
 		saveBtn := widget.NewButtonWithIcon(lang.L("Save"), theme.DocumentSaveIcon(), e.save)
-		saveAsBtn := widget.NewButton(lang.L("Save As…"), e.saveAsDialog)
-		toolbar = container.NewHBox(openBtn, saveBtn, saveAsBtn, widget.NewSeparator(), exportBtn, webBtn)
+		saveAsBtn := widget.NewButton(lang.L("Save As…"), func() { e.saveAsDialog(nil) })
+		toolbar = container.NewHBox(newBtn, openBtn, saveBtn, saveAsBtn, widget.NewSeparator(),
+			exportBtn, webBtn, widget.NewSeparator(), settingsBtn, quitBtn)
 		body = container.NewHSplit(e.editScroll, e.previewScroll)
 	}
 
@@ -291,7 +299,20 @@ func (e *editor) loadDocument(path, text string) {
 	e.renderPreview()
 	e.updateTitle()
 	e.updatePosition()
-	e.setStatus(lang.L("Opened {{.Path}}", map[string]any{"Path": path}))
+	if path == "" {
+		e.setStatus(lang.L("New document"))
+	} else {
+		e.setStatus(lang.L("Opened {{.Path}}", map[string]any{"Path": path}))
+	}
+}
+
+// newDocument replaces the current document with an empty untitled one,
+// asking first if there are unsaved changes.
+func (e *editor) newDocument() {
+	e.confirmDiscard(func() {
+		e.loadDocument("", "")
+		e.win.Canvas().Focus(e.entry)
+	})
 }
 
 // openDialog shows a file chooser rooted at the current working directory.
@@ -325,11 +346,19 @@ func (e *editor) openDialog() {
 
 // save writes to the current file or asks for a name if there is none.
 func (e *editor) save() {
+	e.saveThen(nil)
+}
+
+// saveThen saves the document (asking for a name if it is untitled) and
+// calls next only if saving succeeded. next may be nil.
+func (e *editor) saveThen(next func()) {
 	if e.path == "" {
-		e.saveAsDialog()
+		e.saveAsDialog(next)
 		return
 	}
-	e.saveTo(e.path)
+	if e.saveTo(e.path) && next != nil {
+		next()
+	}
 }
 
 func (e *editor) saveTo(path string) bool {
@@ -345,7 +374,9 @@ func (e *editor) saveTo(path string) bool {
 	return true
 }
 
-func (e *editor) saveAsDialog() {
+// saveAsDialog asks for a file name and saves there; onSaved (may be nil)
+// runs after a successful save.
+func (e *editor) saveAsDialog(onSaved func()) {
 	d := dialog.NewFileSave(func(w fyne.URIWriteCloser, err error) {
 		if err != nil {
 			e.showError(err.Error())
@@ -370,6 +401,9 @@ func (e *editor) saveAsDialog() {
 		e.dirty = false
 		e.updateTitle()
 		e.setStatus(lang.L("Saved {{.Path}}", map[string]any{"Path": path}))
+		if onSaved != nil {
+			onSaved()
+		}
 	}, e.win)
 	d.SetFilter(markdownFilter())
 	if e.path != "" {
@@ -451,28 +485,45 @@ func (e *editor) showError(msg string) {
 	dialog.ShowInformation(lang.L("Error"), msg, e.win)
 }
 
-// confirmDiscard runs next immediately if nothing would be lost, otherwise
-// after the user agrees to discard unsaved changes.
+// confirmDiscard runs next immediately if nothing would be lost. Otherwise
+// it asks whether to save the changes first, discard them, or cancel.
 func (e *editor) confirmDiscard(next func()) {
 	if !e.dirty || e.previewOnly {
 		next()
 		return
 	}
-	d := dialog.NewConfirm(lang.L("Unsaved changes"),
-		lang.L("Discard unsaved changes to {{.Name}}?", map[string]any{"Name": e.displayName()}),
-		func(ok bool) {
-			if ok {
-				next()
-			}
-		}, e.win)
-	d.SetConfirmText(lang.L("Discard"))
-	d.SetDismissText(lang.L("Cancel"))
+	var d *dialog.CustomDialog
+	saveBtn := widget.NewButtonWithIcon(lang.L("Save"), theme.DocumentSaveIcon(), func() {
+		d.Hide()
+		e.saveThen(next)
+	})
+	saveBtn.Importance = widget.HighImportance
+	discardBtn := widget.NewButtonWithIcon(lang.L("Discard"), theme.DeleteIcon(), func() {
+		d.Hide()
+		next()
+	})
+	cancelBtn := widget.NewButtonWithIcon(lang.L("Cancel"), theme.CancelIcon(), func() {
+		d.Hide()
+	})
+	msg := widget.NewLabel(lang.L("Save changes to {{.Name}} before continuing?",
+		map[string]any{"Name": e.displayName()}))
+	d = dialog.NewCustomWithoutButtons(lang.L("Unsaved changes"), msg, e.win)
+	d.SetButtons([]fyne.CanvasObject{cancelBtn, discardBtn, saveBtn})
 	d.Show()
 }
 
+// requestClose handles the window close button.
 func (e *editor) requestClose() {
+	e.quit()
+}
+
+// quit exits the application after checking for unsaved changes.
+func (e *editor) quit() {
 	e.confirmDiscard(func() {
 		e.cleanup()
-		e.win.Close()
+		if e.settingsWin != nil {
+			e.settingsWin.Close()
+		}
+		e.app.Quit()
 	})
 }
